@@ -4,6 +4,8 @@ const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const mysql = require('mysql2/promise');
 const session = require('express-session');
+const RedisStore = require('connect-redis').default;
+const { createClient } = require('redis');
 const bodyParser = require('body-parser');
 const i18next = require('i18next');
 const i18nextMiddleware = require('i18next-express-middleware');
@@ -20,9 +22,6 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Serve static files
-app.use(express.static(path.join(__dirname, 'public')));
-
 // MySQL connection pool
 const db = mysql.createPool({
     host: 'localhost',
@@ -31,15 +30,25 @@ const db = mysql.createPool({
     database: 'file_manager'
 });
 
+// Create Redis client and connect
+const redisClient = createClient({
+    url: 'redis://localhost:6379'
+});
+redisClient.connect().catch(err => console.error('Redis connection error:', err));
+
 // Initialize session and passport
 app.use(session({
+    store: new RedisStore({ client: redisClient }),
     secret: 'secret',
     resave: false,
-    saveUninitialized: true,
-    cookie: { httpOnly: true }
+    saveUninitialized: false,
+    cookie: { maxAge: 24 * 60 * 60 * 1000 } // 1 day
 }));
 app.use(passport.initialize());
 app.use(passport.session());
+
+// Serve static files
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Configure Passport.js for local authentication
 passport.use(new LocalStrategy(
@@ -84,6 +93,8 @@ passport.deserializeUser(async (id, done) => {
 // Authentication middleware
 function ensureAuthenticated(req, res, next) {
     console.log('Checking authentication...');
+    console.log('Session:', req.session);
+    console.log('User:', req.user);
     if (req.isAuthenticated()) {
         console.log('User is authenticated');
         return next();
@@ -104,12 +115,13 @@ app.post('/login', (req, res, next) => {
         if (err) return next(err);
         if (!user) {
             console.log('Authentication failed');
-            return res.redirect('/login'); // Adjust as needed
+            return res.redirect('/login');
         }
         req.logIn(user, (err) => {
             if (err) return next(err);
             console.log('Authentication successful, redirecting to dashboard');
-            return res.redirect('/dashboard'); // Adjust as needed
+            console.log('Session after login:', req.session);
+            return res.redirect('/dashboard');
         });
     })(req, res, next);
 });
@@ -160,13 +172,13 @@ const fileQueue = new Queue('file-queue', {
 
 fileQueue.process(async (job) => {
     const { file } = job.data;
-    // Process the file (e.g., save to disk, perform operations)
     console.log(`Processing file: ${file}`);
 });
 
 // Configure Multer for file uploads
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
+        console.log('Checking user authentication for file upload');
         if (!req.user || !req.user.id) {
             console.log('User not authenticated for file upload');
             return cb(new Error('User not authenticated'));
@@ -186,6 +198,8 @@ const upload = multer({ storage });
 // Upload a file
 app.post('/upload', ensureAuthenticated, upload.single('file'), async (req, res) => {
     console.log('Upload route hit');
+    console.log('User:', req.user);
+    console.log('Session:', req.session);
     if (!req.file) {
         console.log('No file uploaded');
         return res.status(400).send('No file uploaded');
@@ -197,7 +211,7 @@ app.post('/upload', ensureAuthenticated, upload.single('file'), async (req, res)
         await db.query('INSERT INTO files (user_id, name, path, size, type) VALUES (?, ?, ?, ?, ?)', [
             req.user.id, originalname, filename, size, mimetype
         ]);
-        fileQueue.add({ file: filename }); // Add to queue
+        fileQueue.add({ file: filename });
         console.log('File uploaded and queued for processing');
         res.send('File uploaded and queued for processing');
     } catch (err) {
@@ -209,8 +223,10 @@ app.post('/upload', ensureAuthenticated, upload.single('file'), async (req, res)
 // Get all files for the user
 app.get('/files', ensureAuthenticated, async (req, res) => {
     try {
+        console.log('Get all files route hit');
         console.log(`Fetching files for user: ${req.user.id}`);
         const [rows] = await db.query('SELECT * FROM files WHERE user_id = ?', [req.user.id]);
+        console.log('Files fetched:', rows);
         res.json(rows);
     } catch (err) {
         console.log('Error fetching files:', err);
@@ -246,27 +262,21 @@ app.delete('/files/:id', ensureAuthenticated, async (req, res) => {
     try {
         console.log(`Attempting to delete file with ID: ${id}`);
         const [rows] = await db.query('SELECT * FROM files WHERE id = ?', [id]);
-
         if (rows.length > 0) {
             const file = rows[0];
             const filePath = path.join(__dirname, 'uploads', String(file.user_id), file.path);
 
-            // Check if file exists before attempting to delete
             if (fs.existsSync(filePath)) {
                 fs.unlinkSync(filePath);
                 await db.query('DELETE FROM files WHERE id = ?', [id]);
-                console.log(`File with ID ${id} deleted`);
                 res.send({ message: 'File deleted' });
             } else {
-                console.log(`File path does not exist: ${filePath}`);
                 res.status(404).send({ message: 'File path not found' });
             }
         } else {
-            console.log(`File with ID ${id} not found in database`);
             res.status(404).send({ message: 'File not found in database' });
         }
     } catch (err) {
-        console.log('Error deleting file:', err);
         res.status(500).send({ message: 'Server error' });
     }
 });
@@ -279,4 +289,4 @@ if (process.env.NODE_ENV !== 'test') {
     });
 }
 
-module.exports = app; // Export app for testing
+module.exports = app;
