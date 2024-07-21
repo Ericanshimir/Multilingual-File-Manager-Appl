@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1721590802607" clover="3.2.0">
-  <project timestamp="1721590802607" name="All files">
+<coverage generated="1721592211232" clover="3.2.0">
+  <project timestamp="1721592211233" name="All files">
     <metrics statements="156" coveredstatements="122" conditionals="32" coveredconditionals="17" methods="20" coveredmethods="15" elements="208" coveredelements="154" complexity="0" loc="156" ncloc="156" packages="1" files="1" classes="1"/>
     <file name="app.js" path="C:\Users\Lenovo\Multilingual-File-Manager-Appl\file-manager-app\app.js">
       <metrics statements="156" coveredstatements="122" conditionals="32" coveredconditionals="17" methods="20" coveredmethods="15"/>
