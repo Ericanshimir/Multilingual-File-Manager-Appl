@@ -28,10 +28,10 @@ describe('File Management', () => {
     it('should upload a new file', async () => {
         const res = await agent
             .post('/upload')
-            .attach('file', path.join(__dirname, 'samplefile.txt')); // Ensure 'tests/samplefile.txt' exists
+            .attach('file', path.join(__dirname, 'samplefile.txt')); // Ensure 'samplefile.txt' exists
 
         expect(res.statusCode).toEqual(200);
-        expect(res.text).toBe('File uploaded and queued for processing');
+        expect(res.body.message).toBe('File uploaded and queued for processing');
 
         const files = await agent.get('/files');
         uploadedFileId = files.body[0].id; // Assuming this is the newly uploaded file
@@ -49,7 +49,7 @@ describe('File Management', () => {
             .send({ name: 'updatedfile.txt' });
 
         expect(res.statusCode).toEqual(200);
-        expect(res.text).toBe(`File with ID ${uploadedFileId} updated to updatedfile.txt`);
+        expect(res.body.message).toBe(`File with ID ${uploadedFileId} updated to updatedfile.txt`);
     });
 
     it('should delete a file', async () => {

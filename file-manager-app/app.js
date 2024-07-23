@@ -56,19 +56,15 @@ passport.use(new LocalStrategy(
         try {
             const [rows] = await db.query('SELECT * FROM users WHERE username = ?', [username]);
             if (rows.length === 0) {
-                console.log('Incorrect username.');
                 return done(null, false, { message: 'Incorrect username.' });
             }
             const user = rows[0];
             const match = await bcrypt.compare(password, user.password);
             if (!match) {
-                console.log('Incorrect password.');
                 return done(null, false, { message: 'Incorrect password.' });
             }
-            console.log('User authenticated:', user);
             return done(null, user);
         } catch (err) {
-            console.log('Error during authentication:', err);
             return done(err);
         }
     }
@@ -93,42 +89,53 @@ passport.deserializeUser(async (id, done) => {
 // Authentication middleware
 function ensureAuthenticated(req, res, next) {
     console.log('Checking authentication...');
+    console.log('Request Headers:', req.headers);
+    console.log('Request Cookies:', req.cookies);
     console.log('Session:', req.session);
-    console.log('User:', req.user);
     if (req.isAuthenticated()) {
-        console.log('User is authenticated');
         return next();
     }
-    console.log('User is not authenticated, redirecting to login');
-    res.redirect('/login');
+    if (req.accepts('html')) {
+        res.redirect('/login.html');
+    } else {
+        res.status(401).json({ message: 'User not authenticated' });
+    }
 }
 
 // Serve login form on GET request
-app.get('/login', (req, res) => {
+app.get('/login.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
 // Handle login on POST request
 app.post('/login', (req, res, next) => {
-    console.log('Login request received');
     passport.authenticate('local', (err, user, info) => {
         if (err) return next(err);
         if (!user) {
-            console.log('Authentication failed');
-            return res.redirect('/login');
+            if (req.accepts('html')) {
+                return res.redirect('/login.html');
+            } else {
+                return res.status(401).json({ message: 'Incorrect username or password' });
+            }
         }
         req.logIn(user, (err) => {
             if (err) return next(err);
-            console.log('Authentication successful, redirecting to dashboard');
-            console.log('Session after login:', req.session);
-            return res.redirect('/dashboard');
+            if (req.accepts('html')) {
+                return res.redirect('/dashboard.html');
+            } else {
+                return res.status(200).json({ message: 'Login successful', user: { id: user.id, username: user.username } });
+            }
         });
     })(req, res, next);
 });
 
 // Define a route for /dashboard
-app.get('/dashboard', ensureAuthenticated, (req, res) => {
-    res.send('Welcome to your dashboard!');
+app.get('/dashboard.html', ensureAuthenticated, (req, res) => {
+    if (req.accepts('html')) {
+        res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+    } else {
+        res.status(200).json({ message: 'Welcome to your dashboard', user: { id: req.user.id, username: req.user.username } });
+    }
 });
 
 // User registration endpoint
@@ -136,7 +143,11 @@ app.post('/register', async (req, res) => {
     const { username, password } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
     await db.query('INSERT INTO users (username, password) VALUES (?, ?)', [username, hashedPassword]);
-    res.send('User registered');
+    if (req.accepts('html')) {
+        res.redirect('/login.html');
+    } else {
+        res.status(200).json({ message: 'User registered successfully' });
+    }
 });
 
 // Initialize i18next for multilingual support
@@ -178,9 +189,7 @@ fileQueue.process(async (job) => {
 // Configure Multer for file uploads
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        console.log('Checking user authentication for file upload');
         if (!req.user || !req.user.id) {
-            console.log('User not authenticated for file upload');
             return cb(new Error('User not authenticated'));
         }
         const dir = `uploads/${req.user.id}`;
@@ -197,40 +206,34 @@ const upload = multer({ storage });
 
 // Upload a file
 app.post('/upload', ensureAuthenticated, upload.single('file'), async (req, res) => {
-    console.log('Upload route hit');
-    console.log('User:', req.user);
-    console.log('Session:', req.session);
     if (!req.file) {
-        console.log('No file uploaded');
-        return res.status(400).send('No file uploaded');
+        return res.status(400).json({ message: 'No file uploaded' });
     }
 
     const { originalname, filename, size, mimetype } = req.file;
     try {
-        console.log('Inserting file into database');
+        console.log(`Uploading file for user ${req.user.id}: ${filename}`);
         await db.query('INSERT INTO files (user_id, name, path, size, type) VALUES (?, ?, ?, ?, ?)', [
             req.user.id, originalname, filename, size, mimetype
         ]);
         fileQueue.add({ file: filename });
-        console.log('File uploaded and queued for processing');
-        res.send('File uploaded and queued for processing');
+        return res.status(200).json({ message: 'File uploaded and queued for processing' });
     } catch (err) {
-        console.log('Error inserting file into database:', err);
-        res.status(500).send('Server error');
+        console.error('Error uploading file:', err);
+        return res.status(500).json({ message: 'Server error' });
     }
 });
 
 // Get all files for the user
 app.get('/files', ensureAuthenticated, async (req, res) => {
     try {
-        console.log('Get all files route hit');
-        console.log(`Fetching files for user: ${req.user.id}`);
+        console.log(`Fetching files for user ${req.user.id}`);
         const [rows] = await db.query('SELECT * FROM files WHERE user_id = ?', [req.user.id]);
         console.log('Files fetched:', rows);
-        res.json(rows);
+        res.status(200).json(rows);
     } catch (err) {
-        console.log('Error fetching files:', err);
-        res.status(500).send('Server error');
+        console.error('Error fetching files:', err);
+        res.status(500).json({ message: 'Server error' });
     }
 });
 
@@ -240,19 +243,13 @@ app.put('/files/:id', ensureAuthenticated, async (req, res) => {
     const { name } = req.body;
 
     try {
-        console.log(`Updating file with ID: ${id}`);
         const [result] = await db.query('UPDATE files SET name = ? WHERE id = ?', [name, id]);
-
         if (result.affectedRows === 0) {
-            console.log(`File with ID ${id} not found`);
-            return res.status(404).send('File not found');
+            return res.status(404).json({ message: 'File not found' });
         }
-
-        console.log(`File with ID ${id} updated to ${name}`);
-        res.send(`File with ID ${id} updated to ${name}`);
+        res.status(200).json({ message: `File with ID ${id} updated to ${name}` });
     } catch (err) {
-        console.log('Error updating file name:', err);
-        res.status(500).send('Server error');
+        res.status(500).json({ message: 'Server error' });
     }
 });
 
@@ -260,25 +257,58 @@ app.put('/files/:id', ensureAuthenticated, async (req, res) => {
 app.delete('/files/:id', ensureAuthenticated, async (req, res) => {
     const { id } = req.params;
     try {
-        console.log(`Attempting to delete file with ID: ${id}`);
         const [rows] = await db.query('SELECT * FROM files WHERE id = ?', [id]);
         if (rows.length > 0) {
             const file = rows[0];
             const filePath = path.join(__dirname, 'uploads', String(file.user_id), file.path);
-
             if (fs.existsSync(filePath)) {
                 fs.unlinkSync(filePath);
                 await db.query('DELETE FROM files WHERE id = ?', [id]);
-                res.send({ message: 'File deleted' });
+                res.status(200).json({ message: 'File deleted' });
             } else {
-                res.status(404).send({ message: 'File path not found' });
+                res.status(404).json({ message: 'File path not found' });
             }
         } else {
-            res.status(404).send({ message: 'File not found in database' });
+            res.status(404).json({ message: 'File not found in database' });
         }
     } catch (err) {
-        res.status(500).send({ message: 'Server error' });
+        res.status(500).json({ message: 'Server error' });
     }
+});
+
+// Serve HTML files
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/register.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'register.html'));
+});
+
+app.get('/upload.html', ensureAuthenticated, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'upload.html'));
+});
+
+app.get('/files.html', ensureAuthenticated, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'files.html'));
+});
+
+app.get('/update-file.html', ensureAuthenticated, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'update-file.html'));
+});
+
+// Logout route
+app.post('/logout', (req, res, next) => {
+    req.logout(function(err) {
+        if (err) {
+            return next(err);
+        }
+        if (req.accepts('html')) {
+            res.redirect('/login.html');
+        } else {
+            res.status(200).json({ message: 'Logout successful' });
+        }
+    });
 });
 
 // Start the server only if not in test environment
