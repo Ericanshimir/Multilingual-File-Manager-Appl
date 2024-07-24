@@ -26,3 +26,20 @@ This project is a multilingual file manager application built using Node.js, Red
 ```bash
 git clone https://github.com/your-username/file-manager.git
 cd file-manager
+
+### 2. Install Dependencies
+
+```bash
+npm install
+
+### 3.Setup Environment Variables
+
+```bash 
+DB_HOST=localhost
+DB_USER=root
+DB_PASSWORD=your_password
+DB_NAME=file_manager
+SESSION_SECRET=your_secret
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+
