@@ -87,4 +87,8 @@ CREATE TABLE files (
    
    ```bash
    npm test
+7. Run server
+
+    ```bash
+node app.js
 
